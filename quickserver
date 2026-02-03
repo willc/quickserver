@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+#
+# quickserver - A minimal static file server in bash
+#
+
+VERSION="1.0.0"
+PORT=8080
+ROOT_DIR="."
+VERBOSE=false
+
+usage() {
+    cat <<EOF
+quickserver v${VERSION} - A minimal static file server in bash
+
+Usage: quickserver [options] [directory]
+
+Options:
+  -p, --port PORT    Port to listen on (default: 8080)
+  -v, --verbose      Show request details
+  -h, --help         Show this help message
+  --version          Show version
+
+Examples:
+  quickserver                    # Serve current directory on port 8080
+  quickserver ./public           # Serve ./public directory
+  quickserver -p 3000 ./dist     # Serve ./dist on port 3000
+
+EOF
+    exit 0
+}
+
+get_mime_type() {
+    case "${1##*.}" in
+        html|htm) echo "text/html" ;;
+        css)      echo "text/css" ;;
+        js)       echo "application/javascript" ;;
+        json)     echo "application/json" ;;
+        xml)      echo "application/xml" ;;
+        txt)      echo "text/plain" ;;
+        md)       echo "text/markdown" ;;
+        png)      echo "image/png" ;;
+        jpg|jpeg) echo "image/jpeg" ;;
+        gif)      echo "image/gif" ;;
+        svg)      echo "image/svg+xml" ;;
+        ico)      echo "image/x-icon" ;;
+        webp)     echo "image/webp" ;;
+        woff)     echo "font/woff" ;;
+        woff2)    echo "font/woff2" ;;
+        ttf)      echo "font/ttf" ;;
+        otf)      echo "font/otf" ;;
+        pdf)      echo "application/pdf" ;;
+        zip)      echo "application/zip" ;;
+        mp3)      echo "audio/mpeg" ;;
+        mp4)      echo "video/mp4" ;;
+        webm)     echo "video/webm" ;;
+        *)        echo "application/octet-stream" ;;
+    esac
+}
+
+send_response() {
+    local status="$1"
+    local content_type="$2"
+    local body="$3"
+    local content_length=${#body}
+
+    printf "HTTP/1.1 %s\r\n" "$status"
+    printf "Content-Type: %s\r\n" "$content_type"
+    printf "Content-Length: %d\r\n" "$content_length"
+    printf "Connection: close\r\n"
+    printf "\r\n"
+    printf "%s" "$body"
+}
+
+send_file() {
+    local file="$1"
+    local mime_type
+    local file_size
+
+    mime_type=$(get_mime_type "$file")
+    file_size=$(wc -c < "$file" | tr -d ' ')
+
+    printf "HTTP/1.1 200 OK\r\n"
+    printf "Content-Type: %s\r\n" "$mime_type"
+    printf "Content-Length: %d\r\n" "$file_size"
+    printf "Connection: close\r\n"
+    printf "\r\n"
+    cat "$file"
+}
+
+handle_request() {
+    local request_line
+    local method
+    local path
+    local file_path
+
+    # Read the request line
+    read -r request_line
+
+    # Parse method and path
+    method=$(echo "$request_line" | cut -d' ' -f1)
+    path=$(echo "$request_line" | cut -d' ' -f2)
+
+    # Consume remaining headers
+    while read -r header && [ -n "$header" ] && [ "$header" != $'\r' ]; do
+        :
+    done
+
+    # Decode URL (basic: just handle %20 for spaces)
+    path=$(echo "$path" | sed 's/%20/ /g')
+
+    # Security: prevent directory traversal
+    if [[ "$path" == *".."* ]]; then
+        send_response "403 Forbidden" "text/plain" "Forbidden"
+        $VERBOSE && echo "[$(date '+%H:%M:%S')] $method $path -> 403"
+        return
+    fi
+
+    # Default to index.html for directory requests
+    if [[ "$path" == "/" ]]; then
+        path="/index.html"
+    fi
+
+    # Build file path
+    file_path="${ROOT_DIR}${path}"
+
+    # Check if it's a directory, try index.html
+    if [[ -d "$file_path" ]]; then
+        file_path="${file_path%/}/index.html"
+    fi
+
+    # Serve the file or 404
+    if [[ -f "$file_path" ]]; then
+        send_file "$file_path"
+        $VERBOSE && echo "[$(date '+%H:%M:%S')] $method $path -> 200"
+    else
+        send_response "404 Not Found" "text/html" "<h1>404 Not Found</h1><p>The requested file was not found.</p>"
+        $VERBOSE && echo "[$(date '+%H:%M:%S')] $method $path -> 404"
+    fi
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -p|--port)
+            PORT="$2"
+            shift 2
+            ;;
+        -v|--verbose)
+            VERBOSE=true
+            shift
+            ;;
+        -h|--help)
+            usage
+            ;;
+        --version)
+            echo "quickserver v${VERSION}"
+            exit 0
+            ;;
+        -*)
+            echo "Unknown option: $1"
+            echo "Run 'quickserver --help' for usage"
+            exit 1
+            ;;
+        *)
+            ROOT_DIR="$1"
+            shift
+            ;;
+    esac
+done
+
+# Validate root directory
+if [[ ! -d "$ROOT_DIR" ]]; then
+    echo "Error: Directory '$ROOT_DIR' does not exist"
+    exit 1
+fi
+
+# Convert to absolute path
+ROOT_DIR=$(cd "$ROOT_DIR" && pwd)
+
+echo "quickserver v${VERSION}"
+echo "Serving $ROOT_DIR on http://localhost:${PORT}"
+echo "Press Ctrl+C to stop"
+echo ""
+
+# Main server loop
+while true; do
+    handle_request | nc -l "$PORT"
+done
