@@ -96,45 +96,45 @@ handle_request() {
     # Read the request line
     read -r request_line
 
+    # Handle empty requests
+    [[ -z "$request_line" ]] && return
+
     # Parse method and path
     method=$(echo "$request_line" | cut -d' ' -f1)
     path=$(echo "$request_line" | cut -d' ' -f2)
 
     # Consume remaining headers
-    while read -r header && [ -n "$header" ] && [ "$header" != $'\r' ]; do
-        :
+    while IFS= read -r header; do
+        header="${header%%$'\r'}"
+        [[ -z "$header" ]] && break
     done
 
-    # Decode URL (basic: just handle %20 for spaces)
+    # Decode URL (basic: handle %20 for spaces)
     path=$(echo "$path" | sed 's/%20/ /g')
 
     # Security: prevent directory traversal
     if [[ "$path" == *".."* ]]; then
         send_response "403 Forbidden" "text/plain" "Forbidden"
-        $VERBOSE && echo "[$(date '+%H:%M:%S')] $method $path -> 403"
+        $VERBOSE && echo "[$(date '+%H:%M:%S')] $method $path -> 403" >&2
         return
     fi
 
-    # Default to index.html for directory requests
-    if [[ "$path" == "/" ]]; then
-        path="/index.html"
-    fi
+    # Default to index.html for root
+    [[ "$path" == "/" ]] && path="/index.html"
 
     # Build file path
     file_path="${ROOT_DIR}${path}"
 
-    # Check if it's a directory, try index.html
-    if [[ -d "$file_path" ]]; then
-        file_path="${file_path%/}/index.html"
-    fi
+    # If directory, try index.html
+    [[ -d "$file_path" ]] && file_path="${file_path%/}/index.html"
 
-    # Serve the file or 404
+    # Serve file or 404
     if [[ -f "$file_path" ]]; then
         send_file "$file_path"
-        $VERBOSE && echo "[$(date '+%H:%M:%S')] $method $path -> 200"
+        $VERBOSE && echo "[$(date '+%H:%M:%S')] $method $path -> 200" >&2
     else
         send_response "404 Not Found" "text/html" "<h1>404 Not Found</h1><p>The requested file was not found.</p>"
-        $VERBOSE && echo "[$(date '+%H:%M:%S')] $method $path -> 404"
+        $VERBOSE && echo "[$(date '+%H:%M:%S')] $method $path -> 404" >&2
     fi
 }
 
@@ -177,6 +177,12 @@ fi
 # Convert to absolute path
 ROOT_DIR=$(cd "$ROOT_DIR" && pwd)
 
+# Create temp directory and named pipe for bidirectional communication
+TMPDIR=$(mktemp -d)
+PIPE="$TMPDIR/pipe"
+mkfifo "$PIPE"
+trap "rm -rf $TMPDIR" EXIT
+
 echo "quickserver v${VERSION}"
 echo "Serving $ROOT_DIR on http://localhost:${PORT}"
 echo "Press Ctrl+C to stop"
@@ -184,5 +190,5 @@ echo ""
 
 # Main server loop
 while true; do
-    handle_request | nc -l "$PORT"
+    nc -l "$PORT" < "$PIPE" | handle_request > "$PIPE"
 done
