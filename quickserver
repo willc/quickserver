@@ -119,17 +119,31 @@ handle_request() {
         return
     fi
 
-    # Default to index.html for root
-    [[ "$path" == "/" ]] && path="/index.html"
-
     # Build file path
     file_path="${ROOT_DIR}${path}"
 
-    # If directory, try index.html
-    [[ -d "$file_path" ]] && file_path="${file_path%/}/index.html"
-
-    # Serve file or 404
-    if [[ -f "$file_path" ]]; then
+    # Handle directory requests
+    if [[ -d "$file_path" ]]; then
+        # Try index.html first
+        if [[ -f "${file_path%/}/index.html" ]]; then
+            send_file "${file_path%/}/index.html"
+            $VERBOSE && echo "[$(date '+%H:%M:%S')] $method $path -> 200" >&2
+        else
+            # Generate directory listing
+            local listing="<html><head><title>Index of ${path}</title><style>body{font-family:monospace;padding:20px}a{text-decoration:none}a:hover{text-decoration:underline}</style></head><body><h1>Index of ${path}</h1><hr><pre>"
+            # Add parent directory link if not root
+            [[ "$path" != "/" ]] && listing+=$'<a href="../">..</a>\n'
+            # List directories first, then files
+            while IFS= read -r entry; do
+                local name=$(basename "$entry")
+                [[ -d "$entry" ]] && name+="/"
+                listing+="<a href=\"${name}\">${name}</a>"$'\n'
+            done < <(ls -1 "$file_path" | while read f; do echo "${file_path%/}/$f"; done)
+            listing+="</pre><hr></body></html>"
+            send_response "200 OK" "text/html" "$listing"
+            $VERBOSE && echo "[$(date '+%H:%M:%S')] $method $path -> 200 (dir)" >&2
+        fi
+    elif [[ -f "$file_path" ]]; then
         send_file "$file_path"
         $VERBOSE && echo "[$(date '+%H:%M:%S')] $method $path -> 200" >&2
     else
