@@ -68,6 +68,10 @@ Works on macOS and Linux.
 
 ## FAQ
 
+**Why did you make this?**
+
+It's a handy tool for pentesters, capture-the-flag players, and general tinkerers in home labs.
+
 **Is this production ready?**
 
 No. This is for development, testing, and quick file sharing. Use nginx, Apache, or a proper static file host for production.
