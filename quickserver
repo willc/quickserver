@@ -174,8 +174,9 @@ if [[ ! -d "$ROOT_DIR" ]]; then
     exit 1
 fi
 
-# Convert to absolute path
+# Convert to absolute path and export for subshells
 ROOT_DIR=$(cd "$ROOT_DIR" && pwd)
+export ROOT_DIR VERBOSE
 
 # Create temp directory and named pipe for bidirectional communication
 TMPDIR=$(mktemp -d)
